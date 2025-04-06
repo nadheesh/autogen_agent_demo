@@ -1,0 +1,13 @@
+2025-04-04 14:51:44: agentLogger - INFO - Successfully fetched token with scopes: ['read_hotels'] using agent credentials.
+2025-04-04 14:51:47: agentLogger - INFO - Successfully fetched token with scopes: ['read_rooms'] using agent credentials.
+2025-04-07 00:53:48: agentLogger - INFO - Successfully fetched token with scopes: ['read_hotels'] using agent credentials.
+2025-04-07 00:56:48: agentLogger - INFO - Successfully fetched token with scopes: ['read_hotels'] using agent credentials.
+2025-04-07 00:57:18: agentLogger - INFO - Successfully fetched token with scopes: ['read_hotels'] using agent credentials.
+2025-04-07 01:05:02: agentLogger - INFO - Successfully fetched token with scopes: ['read_hotels'] using agent credentials.
+2025-04-07 01:10:09: agentLogger - INFO - Successfully fetched token with scopes: ['read_hotels'] using agent credentials.
+2025-04-07 01:14:03: agentLogger - INFO - Successfully fetched token with scopes: ['read_hotels'] using agent credentials.
+2025-04-07 01:14:08: agentLogger - INFO - Successfully fetched token with scopes: ['read_rooms'] using agent credentials.
+2025-04-07 01:14:08: agentLogger - INFO - Successfully fetched token with scopes: ['read_rooms'] using agent credentials.
+2025-04-07 01:21:07: agentLogger - INFO - Successfully fetched token with scopes: ['read_hotels'] using agent credentials.
+2025-04-07 01:21:13: agentLogger - INFO - Successfully fetched token with scopes: ['read_rooms'] using agent credentials.
+2025-04-07 01:21:48: agentLogger - INFO - Successfully fetched token with scopes: ['read_rooms'] using agent credentials.

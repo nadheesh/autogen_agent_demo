@@ -1,0 +1,224 @@
+openapi: 3.0.0
+info:
+  title: LLM Chat API
+  version: 1.0.0
+  description: API for chatting with an LLM agent and handling authentication callbacks.
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+
+paths:
+  /chat:
+    post:
+      summary: Chat with the LLM agent
+      description: Send a message to the LLM agent and receive a response
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: header
+          name: ThreadID
+          schema:
+            type: string
+          required: false
+          description: Thread ID for conversation history
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+      responses:
+        '200':
+          description: Successful response from the LLM agent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /callback:
+    get:
+      summary: Authentication callback
+      description: Callback endpoint for authentication flow
+      parameters:
+        - in: query
+          name: code
+          schema:
+            type: string
+          required: true
+          description: Authentication code
+        - in: query
+          name: state
+          schema:
+            type: string
+          required: true
+          description: State parameter for verification
+      responses:
+        '200':
+          description: Successfully authenticated
+          content:
+            text/html:
+              schema:
+                type: string
+        '400':
+          description: Invalid state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /google_callback:
+    get:
+      summary: Google authentication callback
+      description: Callback endpoint for Google authentication flow
+      parameters:
+        - in: query
+          name: code
+          schema:
+            type: string
+          required: true
+          description: Google authentication code
+        - in: query
+          name: state
+          schema:
+            type: string
+          required: true
+          description: State parameter for verification
+      responses:
+        '200':
+          description: Successfully authenticated with Google
+          content:
+            text/html:
+              schema:
+                type: string
+        '400':
+          description: Invalid state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /state/{thread_id}:
+    get:
+      summary: Get thread state
+      description: Retrieves the current state for a specific thread
+      parameters:
+        - in: path
+          name: thread_id
+          schema:
+            type: string
+          required: true
+          description: ID of the thread to get state for
+      responses:
+        '200':
+          description: Thread state retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  states:
+                    type: array
+                    items:
+                      type: string
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /health:
+    get:
+      summary: Health check
+      description: Check if the API service is running correctly
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+
+components:
+  schemas:
+    ChatRequest:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          description: The message from the user
+        threadId:
+          type: string
+          description: Optional thread ID
+          nullable: true
+
+    Response:
+      type: object
+      properties:
+        chat_response:
+          type: string
+          nullable: true
+          description: Text response from the agent
+        tool_response:
+          type: object
+          nullable: true
+          description: Response from any tools used by the agent
+
+    ChatResponse:
+      type: object
+      properties:
+        response:
+          $ref: '#/components/schemas/Response'
+        frontend_state:
+          type: string
+          description: Current state for the frontend
+        message_states:
+          type: array
+          items:
+            type: string
+          description: States of messages in the conversation
+
+    Error:
+      type: object
+      properties:
+        detail:
+          type: string
+          description: Error message
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token for authentication
