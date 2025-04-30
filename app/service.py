@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from starlette.responses import HTMLResponse
 
 from app import asgardeo_manager, connection_manager
-from tools import HotelAPI
+from app.tools import HotelAPI
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

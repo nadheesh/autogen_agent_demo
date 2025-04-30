@@ -16,15 +16,14 @@ from dotenv import load_dotenv
 from .asgardeo import AsgardeoManager
 from .connection import ConnectionManager
 
-load_dotenv("../.env")
+load_dotenv(".env")
 
 client_id = os.environ.get('ASGARDEO_CLIENT_ID')
 client_secret = os.environ.get('ASGARDEO_CLIENT_SECRET')
-tenant_domain = os.environ.get('ASGARDEO_METADATA_URL')
+tenant_domain = os.environ.get('ASGARDEO_TENANT_DOMAIN')
 redirect_url = os.environ.get('ASGARDEO_REDIRECT_URI', 'http://localhost:8000/oauth/callback')
 
 token_endpoint = f"https://{tenant_domain}/oauth2/token"
 
-
 connection_manager = ConnectionManager()
-asgardeo_manager = AsgardeoManager()
+asgardeo_manager = AsgardeoManager(client_id, client_secret, token_endpoint, redirect_url)
