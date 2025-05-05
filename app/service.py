@@ -1,23 +1,32 @@
-import json
+"""
+ Copyright (c) 2025, WSO2 LLC. (http://www.wso2.com). All Rights Reserved.
+
+  This software is the property of WSO2 LLC. and its suppliers, if any.
+  Dissemination of any information or reproduction of any material contained
+  herein is strictly forbidden, unless permitted by WSO2 in accordance with
+  the WSO2 Commercial License available at http://wso2.com/licenses.
+  For specific language governing the permissions and limitations under
+  this license, please see the license as well as any agreement you’ve
+  entered into with WSO2 governing the purchase of this software and any
+"""
+
 import logging
 import os
-from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Dict
 
-# Add these imports to main.py
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.messages import TextMessage
-from autogen_core import MessageContext, RoutedAgent, message_handler
-from autogen_core import SingleThreadedAgentRuntime, AgentId
-from autogen_core.tools import FunctionTool
+from autogen_core import CancellationToken
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, HTTPException
 from pydantic import BaseModel
 from starlette.responses import HTMLResponse
+from starlette.websockets import WebSocketDisconnect
 
-from app import asgardeo_manager, connection_manager
-from app.tools import HotelAPI
+from app.auth import AuthRequestMessage, AuthManager
+from app.prompt import agent_system_prompt
+from app.tools import get_tools
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -25,20 +34,17 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-hotel_api_base_url = os.environ.get('HOTEL_API_BASE_URL')
-
-ASSISTANT_TYPE = "hotel_booking_assistant"
+client_id = os.environ.get('ASGARDEO_CLIENT_ID')
+client_secret = os.environ.get('ASGARDEO_CLIENT_SECRET')
+tenant_domain = os.environ.get('ASGARDEO_TENANT_DOMAIN')
+redirect_url = os.environ.get('ASGARDEO_REDIRECT_URI', 'http://localhost:8000/oauth/callback')
 
 app = FastAPI()
 
 
-# Add session middleware to the app
-# app.add_middleware(SessionMiddleware, secret_key="12345")
-
-
-@dataclass
-class HotelBookingMessageType:
-    content: str
+# @dataclass
+# class HotelBookingMessageType:
+#     content: str
 
 
 class TextResponse(BaseModel):
@@ -46,122 +52,47 @@ class TextResponse(BaseModel):
     content: str
 
 
-class ConsentOptions(BaseModel):
-    accept: str
-    reject: str
+model_client = OpenAIChatCompletionClient(model="gpt-4o")
 
-
-class ConsentContext(BaseModel):
-    action: str
-    details: dict
-
-
-class ConsentRequestResponse(BaseModel):
-    type: Literal["consent_request"] = "consent_request"
-    content: str
-    consent_options: ConsentOptions
-    consent_context: ConsentContext
-
-
-hotelAPIClient = HotelAPI(hotel_api_base_url, "123")
-
-fetch_hotels_tool = FunctionTool(
-    hotelAPIClient.fetch_hotels, description="Fetches all hotels and information about them", name="FetchHotelsTool",
-    strict=True
-)
-book_hotel_tool = FunctionTool(
-    hotelAPIClient.book_hotel, description="Books the hotel room selected by the user.", name="BookHotelTool",
-    strict=True
-)
-fetch_hotel_rooms_tool = FunctionTool(
-    hotelAPIClient.fetch_rooms,
-    description="Fetch the rooms available, and information related such as price, amenities, etc.",
-    name="FetchHotelRoomsTool", strict=True
-)
-ask_user_tool = FunctionTool(
-    hotelAPIClient.ask_user, description="Ask user for additional information required to complete their request",
-    name="AskUserTool", strict=True
-)
-
-
-class HotelBookingAssistant(RoutedAgent):
-    def __init__(self, name: str) -> None:
-        super().__init__(name)
-        model_client = OpenAIChatCompletionClient(model="gpt-4o")
-        self._delegate = AssistantAgent(
-            name,
-            model_client=model_client,
-            tools=[fetch_hotels_tool, fetch_hotel_rooms_tool, book_hotel_tool, ask_user_tool],
-            reflect_on_tool_use=True,
-            system_message="""You are the Hotel Assistant Agent to help the customers of Gardeo Hotel. Gardeo Hotels offer the finest Sri Lankan hospitality and blend seamlessly with nature, creating luxurious experiences. Answer the given question accurately using the given set of tools.
-            
-Make sure to follow these rules:
-            
-1) Always response without IDs, room numbers etc, that does not matter to the user.
-2) Always ask for the user consent before proceeding with any action.
-3) Always use the correct tools fetch required information before proceeding with the bookings.
-4) Use AskUserTool to ask user for any information that is not provided by the user.
-
-Always reply in markdown. Do not perform any actions outside the scope of the task.""")
-
-    @message_handler
-    async def handle_hotel_booking_message_type(self, message: HotelBookingMessageType,
-                                                ctx: MessageContext) -> TextMessage:
-        response = await self._delegate.on_messages(
-            [TextMessage(content=message.content, source="user")], ctx.cancellation_token
-        )
-        for i, msg in enumerate(response.inner_messages):
-            print(f"Step {i + 1}: {msg.content}")
-        return response.chat_message
-
-
-# Runtime setup
-runtime = SingleThreadedAgentRuntime()
-
-
-@app.on_event("startup")
-async def startup_event():
-    await HotelBookingAssistant.register(runtime, ASSISTANT_TYPE, lambda: HotelBookingAssistant(ASSISTANT_TYPE))
-    runtime.start()
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    await runtime.stop()
-
-
-@app.get("/")
-async def root():
-    """Redirect to the chat interface HTML page"""
-    return HTMLResponse("""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Hotel Booking Assistant</title>
-        <meta http-equiv="refresh" content="0;url=/chat.html">
-    </head>
-    <body>
-        <p>Redirecting to chat interface...</p>
-    </body>
-    </html>
-    """)
+auth_managers: Dict[str, AuthManager] = {}
+state_mapping: Dict[str, str] = {}
 
 
 @app.websocket("/chat")
-async def websocket_endpoint(websocket: WebSocket, session_id: str = "123"):
+async def websocket_endpoint(websocket: WebSocket, session_id: str):
     """WebSocket endpoint for chat functionality"""
-    session_id = "123"  # We need to use session id from frontend
 
-    await connection_manager.connect(session_id, websocket)
+    # Create callback function to handle auth request redirects
+    async def message_handler(message: AuthRequestMessage):
+        state_mapping[message.state] = session_id
+        await websocket.send_json(message.model_dump())
+
+    # Create a auth manager instance for the chat session.
+    # Auth manager is shared by all the tools in the session.
+    auth_manager = AuthManager(client_id, client_secret, tenant_domain,
+                               redirect_url, message_handler)
+
+    # Store the auth manager by session_id
+    auth_managers[session_id] = auth_manager
+
+    # Create a agent instance for the chat session
+    hotel_assistant = AssistantAgent(
+        "hotel_booking_assistant",
+        model_client=model_client,
+        tools=get_tools(auth_manager),
+        reflect_on_tool_use=True,
+        system_message=agent_system_prompt)
+
+    # Initiate a web-socket connection
+    await websocket.accept()
+
     try:
-        # Get the HotelBookingAssistant agent from the runtime
-        assistant_agent_id = AgentId(ASSISTANT_TYPE, session_id)
-
         # Welcome message
         await websocket.send_json(TextResponse(
             content="👋 Welcome to Gardeo Hotel Booking Assistant! How can I help you today?"
         ).model_dump())
 
+        # Start the chat loop
         while True:
             user_input = await websocket.receive_text()
 
@@ -170,73 +101,98 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str = "123"):
                 break
 
             # Send the user message to the agent
-            response = await runtime.send_message(
-                HotelBookingMessageType(user_input), assistant_agent_id
-            )
+            response = await hotel_assistant.on_messages(
+                [TextMessage(content=user_input, source="user")], cancellation_token=CancellationToken())
+
+            # Log the response
+            for i, msg in enumerate(response.inner_messages):
+                print(f"Step {i + 1}: {msg.content}")
+            print(f"Final Response: {response.chat_message.content}")
 
             # Send the response back to the client
-            await websocket.send_json(TextResponse(content=response.content).model_dump())
-
+            await websocket.send_json(TextResponse(content=response.chat_message.content).model_dump())
     except WebSocketDisconnect:
         print(f"Client with session_id {session_id} disconnected")
     except Exception as e:
         print(f"Error in WebSocket connection: {str(e)}")
     finally:
-        connection_manager.disconnect(session_id)
+        auth_managers.pop(session_id, None)
 
 
-# Updated callback endpoint
 @app.get("/oauth/callback")
 async def callback(
         code: str,
-        state: str,
-):
+        state: str):
+    # Check if the state is valid
+    session_id = state_mapping.pop(state, None)
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Invalid state.")
+
+    # Get the auth manager for the session
+    auth_manager = auth_managers.get(session_id)
+    if not auth_manager:
+        raise HTTPException(status_code=400, detail="Invalid session.")
+
     try:
-        auth_code = asgardeo_manager.state_mapping.get(state)
-        if not auth_code:
-            raise HTTPException(status_code=400, detail="Invalid state")
-
-        # Store the code
-        auth_code.code = code
-        asgardeo_manager.state_mapping[state] = auth_code
-
-        # Fetch the token
-        token = await asgardeo_manager.fetch_user_token(state)
-
-        # Get the thread ID (session_id) from the state
-        thread_id = asgardeo_manager.get_thread_id_from_state(state)
+        token = await auth_manager.process_callback(state, code)
 
         # Redirect to a success page
         website_url = os.environ.get('WEBSITE_URL', 'http://localhost:8000')
 
         return HTMLResponse(
             content=f"""
-                    <html>
-                    <head>
-                        <title>Authorization Successful</title>
-                        <script>
-                            // Use the correct message type that the main window expects
+                <html>
+                <head>
+                    <title>Authorization Successful</title>
+                    <script>
+                        // Function to communicate with parent window and close
+                        function communicateAndClose() {{
                             if (window.opener) {{
-                                window.opener.postMessage({{
-                                    type: 'auth_callback',  // Must match what frontend expects
-                                    token: {json.dumps(token)},
-                                    state: '{state}'
-                                }}, "*");  // Use * instead of specific origin for better compatibility
+                                try {{
+                                    // Use the correct message structure
+                                    const message = {{
+                                        type: 'auth_callback',
+                                        token: {token.model_dump_json()},
+                                        state: '{state}'
+                                    }};
 
-                                // Let main window know we're authorized before closing
-                                window.opener.authorizationCompleted = true;
-                                setTimeout(function() {{ window.close(); }}, 1000);
+                                    // Send message to opener
+                                    window.opener.postMessage(message, "*");
+
+                                    // Set global flag directly in parent
+                                    if (window.opener.authorizationCompleted !== undefined) {{
+                                        window.opener.authorizationCompleted = true;
+                                    }}
+
+                                    // Display success message
+                                    document.getElementById('status').textContent = 'Authorization successful! Closing window...';
+
+                                    // Close after a short delay
+                                    setTimeout(function() {{ 
+                                        window.close(); 
+                                    }}, 1500);
+                                }} catch (err) {{
+                                    console.error('Error communicating with parent window:', err);
+                                    document.getElementById('status').textContent = 'Error: ' + err.message;
+                                }}
                             }} else {{
-                                window.location.href = '{website_url}/auth_success';
+                                document.getElementById('status').textContent = 'Cannot find opener window.';
                             }}
-                        </script>
-                    </head>
-                    <body>
+                        }}
+
+                        // Execute on load
+                        window.onload = communicateAndClose;
+                    </script>
+                </head>
+                <body>
+                    <div style="text-align: center; font-family: Arial, sans-serif; margin-top: 50px;">
                         <h2>Authorization Successful</h2>
-                        <p>Authorization completed! You can close this window and return to the booking assistant.</p>
-                    </body>
-                    </html>
-                    """
+                        <p id="status">Processing authorization...</p>
+                        <p>You can close this window and return to the booking assistant.</p>
+                    </div>
+                </body>
+                </html>
+                """
         )
     except Exception as e:
         logger.error(f"Error in callback: {str(e)}", exc_info=True)

@@ -588,39 +588,51 @@
         window.addEventListener('message', function(event) {
             log('Received message from window', event.data);
 
-            const data = event.data;
-            if (data && data.type === 'auth_callback' && data.token && data.state) {
-                log('Valid auth callback received with token and state', data);
+            try {
+                const data = event.data;
 
-                // Set the global flag to indicate authorization was completed
-                window.authorizationCompleted = true;
+                // Check for auth_callback message
+                if (data && data.type === 'auth_callback' && data.state) {
+                    log('Valid auth callback received', data);
 
-                // We received an OAuth token from the popup
-                if (pendingAuthRequests[data.state]) {
-                    log('Found pending auth request for state', data.state);
+                    // Set the global flag to indicate authorization was completed
+                    window.authorizationCompleted = true;
 
-                    const authResponse = {
-                        success: true,
-                        state: data.state,
-                        access_token: data.token.access_token,
-                        id_token: data.token.id_token,
-                        booking_details: pendingAuthRequests[data.state].booking_details
-                    };
+                    // Parse token if it's a string
+                    let tokenData = data.token;
+                    if (typeof tokenData === 'string') {
+                        try {
+                            tokenData = JSON.parse(tokenData);
+                        } catch (e) {
+                            log('Error parsing token string', e);
+                        }
+                    }
 
-                    // Send the token back through the WebSocket
-                    log('Sending token to backend via WebSocket');
-                    ws.send(JSON.stringify(authResponse));
-                    addSystemMessage("Authorization completed successfully. Processing your booking...");
+                    // We received an OAuth token from the popup
+                    if (pendingAuthRequests[data.state]) {
+                        log('Found pending auth request for state', data.state);
 
-                    // Clean up the pending request
-                    delete pendingAuthRequests[data.state];
-                } else {
-                    log('No pending auth request found for state', data.state);
+<!--                        const authResponse = {-->
+<!--                            success: true,-->
+<!--                            state: data.state,-->
+<!--                            access_token: tokenData.access_token,-->
+<!--                            id_token: tokenData.id_token,-->
+<!--                            booking_details: pendingAuthRequests[data.state].context-->
+<!--                        };-->
+
+<!--                        // Send the token back through the WebSocket-->
+<!--                        log('Sending token to backend via WebSocket');-->
+<!--                        ws.send(JSON.stringify(authResponse));-->
+                        addSystemMessage("Authorization completed successfully. Processing your booking...");
+
+                        // Clean up the pending request
+                        delete pendingAuthRequests[data.state];
+                    } else {
+                        log('No pending auth request found for state', data.state);
+                    }
                 }
-            } else if (data && data.type === 'auth_complete' && data.state) {
-                // Alternative message format
-                log('Received auth_complete message', data);
-                window.authorizationCompleted = true;
+            } catch (error) {
+                log('Error processing window message', error);
             }
         });
 
@@ -968,12 +980,12 @@
             authContainer.appendChild(descDiv);
 
             // Add booking details
-            if (data.booking_details) {
+            if (data.context) {
                 let detailsDiv = document.createElement("div");
                 detailsDiv.className = "auth-details";
 
                 let detailsContent = "<strong>Booking Details:</strong><br>";
-                for (const [key, value] of Object.entries(data.booking_details)) {
+                for (const [key, value] of Object.entries(data.context)) {
                     // Format the key name (e.g., "hotel_id" -> "Hotel ID")
                     const formattedKey = key
                         .replace(/_/g, ' ')
@@ -998,6 +1010,14 @@
             authButton.onclick = () => {
                 log("Auth button clicked, opening auth window", data.auth_url);
 
+                // Store booking details in the pending request for later use
+                if (data.context) {
+                    pendingAuthRequests[data.state] = {
+                        ...data,
+                        booking_details: data.context  // Make sure booking details are stored here
+                    };
+                }
+
                 // Open authorization URL in popup
                 const authWindow = window.open(
                     data.auth_url,
@@ -1018,23 +1038,24 @@
                             log("Auth window closed");
                             clearInterval(checkClosed);
 
-                            // Only show failure message if auth wasn't completed
-                            if (pendingAuthRequests[data.state] && !window.authorizationCompleted) {
-                                log("Auth window closed without completing authorization");
-                                addSystemMessage("Authorization window was closed. The booking was not completed.");
+                            // Wait a brief moment to allow any final messages to be processed
+                            setTimeout(() => {
+                                // Only show failure message if auth wasn't completed
+                                if (pendingAuthRequests[data.state] && !window.authorizationCompleted) {
+                                    log("Auth window closed without completing authorization");
+                                    addSystemMessage("Authorization window was closed. The booking was not completed.");
 
-                                // Send cancellation to backend
-                                log("Sending cancellation to backend", data.state);
-                                ws.send(JSON.stringify({
-                                    success: false,
-                                    state: data.state,
-                                    reason: "window_closed"
-                                }));
+                                    // Send cancellation to backend
+                                    log("Sending cancellation to backend", data.state);
+                                    ws.send(JSON.stringify({
+                                        success: false,
+                                        state: data.state,
+                                        reason: "window_closed"
+                                    }));
 
-                                delete pendingAuthRequests[data.state];
-                            } else {
-                                log("Auth window closed, but authorization was completed", window.authorizationCompleted);
-                            }
+                                    delete pendingAuthRequests[data.state];
+                                }
+                            }, 500);  // Short delay to ensure messages are processed
                         }
                     }, 1000);
                 }
