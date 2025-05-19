@@ -15,7 +15,7 @@ import logging
 import secrets
 import time
 from enum import Enum
-from typing import List, Dict, Callable, Awaitable, Literal, get_type_hints
+from typing import List, Dict, Callable, Awaitable, Literal, get_type_hints, Tuple
 from typing import Optional
 
 from authlib.integrations.httpx_client import AsyncOAuth2Client
@@ -112,7 +112,7 @@ class AuthManager:
         self.authorization_timeout = authorization_timeout
 
         # Pending authorization requests
-        self._pending_auths: Dict[str, asyncio.Future] = {}
+        self._pending_auths: Dict[str, Tuple[List[str], asyncio.Future]] = {}
 
         # Optional message handler
         self._message_handler = message_handler
@@ -156,8 +156,13 @@ class AuthManager:
     def get_message_handler(self) -> Callable[[AuthRequestMessage], Awaitable[None]]:
         return self._message_handler
 
-    async def _refresh_oauth_token(self, refresh_token: str, scopes: List[str]) -> OAuthToken:
+    async def _refresh_oauth_token(self, refresh_token: str, scopes: List[str]) -> Optional[OAuthToken]:
         """Refresh OAuth token"""
+
+        # If refresh token is empty, then stop token refreshing
+        if not refresh_token:
+            return None
+
         client = AsyncOAuth2Client(
             client_id=self.client_id,
             client_secret=self.client_secret,
@@ -273,7 +278,7 @@ class AuthManager:
         # If a token exits, check if it is expired
         if token and token.is_expired():
             # If the token is expired, try refreshing it
-            logger.debug("Token expired. Attempting to fetch %s for the scope %s", config.token_type.name,
+            logger.debug("Token expired. Attempting to refresh %s for the scopes %s", config.token_type.name,
                          config.scopes)
             token = await self._refresh_oauth_token(token.refresh_token, config.scopes)
 
@@ -281,7 +286,7 @@ class AuthManager:
         if token:
             return token
 
-        logger.debug("Attempting to fetch %s for the scope %s", config.token_type.name, config.scopes)
+        logger.debug("Attempting to fetch %s for the scopes %s", config.token_type.name, config.scopes)
         if config.token_type == OAuthTokenType.OBO_TOKEN:
             token = await self._fetch_obo_token(config)
         elif config.token_type == OAuthTokenType.CLIENT_TOKEN:
@@ -289,6 +294,9 @@ class AuthManager:
         else:
             raise ValueError(f"Unsupported token type: {config.token_type}")
 
+        # Cache the token in token manager
+        if token:
+            self._token_manager.add_token(config, token)
         return token
 
     async def process_callback(self, state: str, code: str) -> OAuthToken:
