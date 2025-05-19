@@ -15,8 +15,7 @@ import os
 import httpx
 from dotenv import load_dotenv
 
-from app.auth import AuthToken, AuthManager, OAuthGrantType
-from app.utils import SecureFunctionTool, ToolAuthContext, ToolAuthSpec
+from sdk.auth import OAuthToken
 
 load_dotenv()
 
@@ -37,19 +36,19 @@ async def _get(base_url: str, path: str, bearer_token: str, params: dict = None)
         return response.json()
 
 
-async def fetch_hotels(token: AuthToken) -> dict:
+async def fetch_hotels(token: OAuthToken) -> dict:
     path = "api/hotels"
     return await _get(hotel_api_base_url, path, token.access_token)
 
 
-async def fetch_rooms(hotel_id: int, token: AuthToken) -> dict:
+async def fetch_rooms(hotel_id: int, token: OAuthToken) -> dict:
     path = f"api/hotels/{hotel_id}"
     return await _get(hotel_api_base_url, path, token.access_token)
 
 
 async def make_booking(hotel_id: int, room_id: int, date_from: str, date_to: str,  # used for API
                        hotel_name: str, total_cost: str,  # used for confirmation
-                       token: AuthToken  # used for authorization
+                       token: OAuthToken  # used for authorization
                        ):
     async with httpx.AsyncClient() as client:
         # Set the authorization header with the access token
@@ -78,39 +77,3 @@ async def make_booking(hotel_id: int, room_id: int, date_from: str, date_to: str
 
         # Return the JSON response
         return response.json()
-
-
-def get_tools(auth_manager: AuthManager) -> list:
-    """Get the tools to be used by the assistant agent"""
-    fetch_hotels_tool = SecureFunctionTool(
-        fetch_hotels,
-        description="Fetches all hotels and information about them",
-        name="FetchHotelsTool",
-        auth=ToolAuthSpec(auth_manager, ToolAuthContext(scopes=["read_hotels"])),
-        strict=True
-    )
-
-    fetch_hotel_rooms_tool = SecureFunctionTool(
-        fetch_rooms,
-        description="Fetch the rooms available, and information related such as price, amenities, etc.",
-        name="FetchHotelRoomsTool",
-        auth=ToolAuthSpec(auth_manager, ToolAuthContext(scopes=["read_rooms"])),
-        strict=True
-    )
-
-    book_hotel_tool = SecureFunctionTool(
-        make_booking,
-        description="Books the hotel room selected by the user.",
-        name="BookHotelTool",
-        auth=ToolAuthSpec(auth_manager, ToolAuthContext(
-            scopes=["book_hotel"],
-            grant_type=OAuthGrantType.AUTHORIZATION_CODE
-        )),
-        strict=True
-    )
-
-    return [
-        fetch_hotels_tool,
-        fetch_hotel_rooms_tool,
-        book_hotel_tool
-    ]
